@@ -58,7 +58,7 @@ Open the script and adjust the configuration variables to fit your needs. Key se
 Execute the script in your preferred Python environment:
 
 ```bash
-python range_puller.py
+python coinbase-volatility-scanner.py
 ```
 
 ### Step 6: Monitor Output
