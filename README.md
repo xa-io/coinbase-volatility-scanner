@@ -37,8 +37,8 @@ pip install requests python-dotenv
 Create a `.env` file in the same directory as the script and add the following lines:
 
 ```env
-COINBASE_API_KEY=your_api_key
-COINBASE_API_SECRET=your_api_secret
+COINBASE_API_KEY=organizations/fake-organization-id/apiKeys/fake-api-key-id
+COINBASE_API_SECRET=-----BEGIN EC PRIVATE KEY-----\nTHISISFAKEPRIVATEKEYDO-NOTUSEFAKEKEYINPROD\n-----END EC PRIVATE KEY-----\n
 DISCORD_WEBHOOK_URL=your_discord_webhook_url
 ```
 
