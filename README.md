@@ -2,6 +2,15 @@
 
 This script monitors cryptocurrency pairs on Coinbase Advance for significant price movements and sends notifications to a Discord channel. It regularly fetches the list of active USD trading pairs, tracks their price changes, and alerts you when notable movements occur.
 
+This script is running 24/7 here: https://discord.gg/FprzuuWZ7t
+
+
+BTC: `bc1qwjy0hl4z9c930kgy4nud2fp0nw8m6hzknvumgg`
+
+ETH: `0x0941D41Cd0Ee81bd79Dbe34840bB5999C124D3F0`
+
+SOL: `4cpdbmmp1hyTAstA3iUYdFbqeNBwjFmhQLfL5bMgf77z`
+
 ## Features
 
 - **Real-Time Price Monitoring**: The script checks cryptocurrency prices at regular intervals and tracks historical price changes.
