@@ -4,6 +4,15 @@ This script monitors cryptocurrency pairs on Coinbase Advance for significant pr
 
 This script is running 24/7 here: https://discord.gg/FprzuuWZ7t
 
+## Examples:
+
+`🔹🟦+4.33%   [VOXEL]   $0.14820  [60m +7.35%]🟧🔹`
+
+`🔹🟪+3.28%    [NMR]   $16.37000  [60m +5.34%]🟩🔹`
+
+`🔹◼+1.07%   [DRIFT]   $0.37950  [60m -0.91%]▪️🔸`
+
+## Consider a donation after you buy your lambo.
 
 BTC: `bc1qwjy0hl4z9c930kgy4nud2fp0nw8m6hzknvumgg`
 
