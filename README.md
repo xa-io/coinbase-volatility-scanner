@@ -12,14 +12,6 @@ This script is running 24/7 here: https://discord.gg/FprzuuWZ7t
 
 `🔹◼+1.07%   [DRIFT]   $0.37950  [60m -0.91%]▪️🔸`
 
-## Consider a donation after you buy your lambo.
-
-BTC: `bc1qwjy0hl4z9c930kgy4nud2fp0nw8m6hzknvumgg`
-
-ETH: `0x0941D41Cd0Ee81bd79Dbe34840bB5999C124D3F0`
-
-SOL: `4cpdbmmp1hyTAstA3iUYdFbqeNBwjFmhQLfL5bMgf77z`
-
 ## Features
 
 - **Real-Time Price Monitoring**: The script checks cryptocurrency prices at regular intervals and tracks historical price changes.
@@ -117,3 +109,12 @@ The script will print logs to the console and send notifications to Discord base
 - **Database Support**: Potentially adding database support if in-memory storage becomes insufficient.
 - **Additional Intervals**: Exploring additional time intervals for price monitoring.
 - **Enhanced Logging**: Adding more detailed error logging and notifications for better diagnostics.
+
+
+## Consider a donation after you buy your lambo.
+
+BTC: `bc1qwjy0hl4z9c930kgy4nud2fp0nw8m6hzknvumgg`
+
+ETH: `0x0941D41Cd0Ee81bd79Dbe34840bB5999C124D3F0`
+
+SOL: `4cpdbmmp1hyTAstA3iUYdFbqeNBwjFmhQLfL5bMgf77z`
