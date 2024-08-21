@@ -1,6 +1,6 @@
-# Coinbase Advance Volatility Watcher
+# Coinbase Advanced Volatility Watcher
 
-This script monitors cryptocurrency pairs on Coinbase Advance for significant price movements and sends notifications to a Discord channel. It regularly fetches the list of active USD trading pairs, tracks their price changes, and alerts you when notable movements occur.
+This script monitors cryptocurrency pairs on Coinbase Advanced for significant price movements and sends notifications to a Discord channel. It regularly fetches the list of active USD trading pairs, tracks their price changes, and alerts you when notable movements occur.
 
 This script is running 24/7 here: https://discord.gg/FprzuuWZ7t
 
