@@ -6,11 +6,11 @@ This script is running 24/7 here: https://discord.gg/FprzuuWZ7t
 
 ## Examples:
 
-`🔹🟦+4.33%   [VOXEL]   $0.14820  [60m +7.35%]🟧🔹`
+`🔹🟦+4.33%   [VOXEL]   $0.14820  [1d +7.35%]🟧🔹`
 
-`🔹🟪+3.28%    [NMR]   $16.37000  [60m +5.34%]🟩🔹`
+`🔹🟪+3.28%    [NMR]   $16.37000  [1d +5.34%]🟩🔹`
 
-`🔹◼+1.07%   [DRIFT]   $0.37950  [60m -0.91%]▪️🔸`
+`🔹◼+1.07%   [DRIFT]   $0.37950  [1d -0.91%]▪️🔸`
 
 ## Features
 
@@ -103,6 +103,20 @@ The script will print logs to the console and send notifications to Discord base
 - Added a post-initialization message to notify users that the initialization period has passed.
 - Improved notification formatting to ensure the correct placement of emojis based on price changes.
 - Added logic to track and store the most recent pair prices in memory, ensuring notifications are only triggered if the price moves beyond the `NOTIFICATION_THRESHOLD`.
+
+### Revision 3: Update (2024-08-21):
+- Converted time-related settings from minutes to hours:
+  - `HISTORY_RETENTION_MINUTES` and `HISTORICAL_INTERVAL_MINUTES` updated to 4 hours (240 minutes).
+  - `UPDATE_INTERVAL_MINUTES` updated to 6 hours (360 minutes).
+- Updated the initial alert and post-initialization messages to reflect the new hourly intervals.
+- Updated notification formatting to display intervals as hours (e.g., `[4hr +5.94%]` instead of `[60m +5.94%]`).
+
+### Revision 4: Update (2024-12-10):
+- Updated notification on longer timeframes to 1 day (e.g., `[1d +5.94%]` instead of `[4hr +5.94%]`).
+- Updated for new Coinbase API endpoints:
+  - Transitioned from the deprecated pro.coinbase.com endpoint to the new Coinbase Advanced Trade endpoint. 
+  - Replaced the old products URL (https://api.pro.coinbase.com/products) with the new URL (https://api.exchange.coinbase.com/products).
+  - Ensured compatibility with the updated format and fields returned by the new Coinbase Advanced Trade API.
 
 ## Future Considerations
 
