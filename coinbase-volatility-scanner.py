@@ -47,6 +47,20 @@
 - Improved notification formatting to ensure the correct placement of emojis based on price changes.
 - Added logic to track and store the most recent pair prices in memory, ensuring notifications are only triggered if the price moves beyond the `NOTIFICATION_THRESHOLD`.
 
+# Revision 3: Update (2024-08-21):
+- Converted time-related settings from minutes to hours:
+  - `HISTORY_RETENTION_MINUTES` and `HISTORICAL_INTERVAL_MINUTES` updated to 4 hours (240 minutes).
+  - `UPDATE_INTERVAL_MINUTES` updated to 6 hours (360 minutes).
+- Updated the initial alert and post-initialization messages to reflect the new hourly intervals.
+- Updated notification formatting to display intervals as hours (e.g., `[4hr +5.94%]` instead of `[60m +5.94%]`).
+
+# Revision 4: Update (2024-12-10):
+- Updated notification on longer timeframes to 1 day (e.g., `[1d +5.94%]` instead of `[4hr +5.94%]`).
+- Updated for new Coinbase API endpoints:
+  - Transitioned from the deprecated pro.coinbase.com endpoint to the new Coinbase Advanced Trade endpoint. 
+  - Replaced the old products URL (https://api.pro.coinbase.com/products) with the new URL (https://api.exchange.coinbase.com/products).
+  - Ensured compatibility with the updated format and fields returned by the new Coinbase Advanced Trade API.
+
 # Future Considerations:
 - Potentially adding database support if in-memory storage becomes insufficient.
 - Exploring additional time intervals for price monitoring beyond the current `FETCH_INTERVAL` and `UPDATE_INTERVAL_MINUTES`.
@@ -76,22 +90,22 @@ SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))  # Directory where the 
 PAIRS_FILE = os.path.join(SCRIPT_DIR, "active_pairs_no_usd.txt")  # Ensure the file is created in the script's directory
 
 # Notification settings
-NOTIFICATION_THRESHOLD = 1  # Minimum percentage change required to trigger a notification
+NOTIFICATION_THRESHOLD = 2  # Minimum percentage change required to trigger a notification
 WICK_MULTIPLIER = 3  # Multiplier for detecting "wicked out of range" events
 NOTIFICATION_COOLDOWN = 5  # Time in minutes before another notification can be sent for the same pair
 NOTIFICATION_COOLDOWN_MULTIPLIER = 2  # Multiplier for applying to NOTIFICATION_THRESHOLD during cooldown
 
 # Historical data settings
-HISTORY_RETENTION_MINUTES = 60  # Time in minutes to retain price history for each pair
-HISTORICAL_INTERVAL_MINUTES = 60  # Time in minutes to calculate historical percentage change
+HISTORY_RETENTION_MINUTES = 1440  # 24 hours converted to minutes
+HISTORICAL_INTERVAL_MINUTES = 1440  # 24 hours converted to minutes
 
 # Update interval setting
-UPDATE_INTERVAL_MINUTES = 300  # Time in minutes to check and update the active pairs
+UPDATE_INTERVAL_MINUTES = 30  # 30 minutes to rescan for active pairs
 
 # Initial alert settings
 SHOW_INITIAL_ALERT = True  # Set to False to skip the initial alert message when the script starts
-INITIAL_ALERT_MESSAGE = f"Scanner has been updated, please allow {HISTORICAL_INTERVAL_MINUTES} minutes for accurate longer term accuracy."  # Custom initial message
-POST_INITIALIZATION_MESSAGE = f"Initialization period of {HISTORICAL_INTERVAL_MINUTES} minutes has passed. All data moving forward will be accurate."  # Custom message after initialization period
+INITIAL_ALERT_MESSAGE = f"Scanner has been updated, please allow {HISTORICAL_INTERVAL_MINUTES // 60} hours for accurate longer term accuracy."  # Custom initial message
+POST_INITIALIZATION_MESSAGE = f"Initialization period of {HISTORICAL_INTERVAL_MINUTES // 60} hours has passed. All data moving forward will be accurate."  # Custom message after initialization period
 
 # Volatility text
 VOLATILE_TEXT = ""  # Text to use in volatile notifications, set to empty string for now
@@ -113,21 +127,20 @@ def load_pairs(file_path):
     with open(file_path, 'r') as f:
         return [line.strip() for line in f.readlines()]
 
-# Function to fetch USD pairs and create/update active_pairs_no_usd.txt
 def update_active_pairs():
-    url = "https://api.pro.coinbase.com/products"
+    url = "https://api.exchange.coinbase.com/products"
     try:
         response = requests.get(url)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching data from Coinbase Pro API: {e}")
+        print(f"Error fetching data from Coinbase Exchange API: {e}")
         return
     
     products = response.json()
-    # Filter out only USD pairs
+    # Filter out only USD pairs (note: still use 'quote_currency' not 'quote_currency_id')
     usd_pairs = [product for product in products if product['quote_currency'] == 'USD' and not product['trading_disabled']]
     
-    # Remove '-USD' from each traded pair and sort them alphabetically
+    # Extract base currencies and sort them
     current_active_pairs_no_usd = sorted(pair['base_currency'] for pair in usd_pairs)
     
     # Load previous pairs from file
@@ -147,9 +160,11 @@ def update_active_pairs():
     else:
         print(f"No changes in active pairs. {PAIRS_FILE} remains the same.")
 
+
 # Function to fetch current spot prices from Coinbase API with retry logic
 def fetch_prices(pairs):
     prices = {}
+    start_time = time.time()  # Start time for fetching prices
     for pair in pairs:
         for attempt in range(RETRY_ATTEMPTS):
             try:
@@ -166,6 +181,8 @@ def fetch_prices(pairs):
                 else:
                     print(f"Failed to fetch price for {pair} after {RETRY_ATTEMPTS} attempts.")
                     prices[pair] = None
+    end_time = time.time()  # End time for fetching prices
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fetching prices took {end_time - start_time:.2f} seconds.")  # Log the time taken
 
     if DEBUG:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -252,7 +269,9 @@ def format_notification(pair, change, current_price, historical_change, extra_in
     sign = "🔹" if change > 0 else "🔸"
     historical_emoji = get_emoji(historical_change)
     historical_sign = "🔹" if historical_change > 0 else "🔸"
-    historical_info = f"[{HISTORICAL_INTERVAL_MINUTES}m {'+' if historical_change > 0 else ''}{historical_change:.2f}%]"
+    # historical_info = f"[{HISTORICAL_INTERVAL_MINUTES // 60}hr {'+' if historical_change > 0 else ''}{historical_change:.2f}%]"
+    historical_info = f"[{HISTORICAL_INTERVAL_MINUTES // 1440}d {'+' if historical_change > 0 else ''}{historical_change:.2f}%]"
+
 
     # Pad the pair name to the desired length
     pair_display = f"[{pair}]".center(PAIR_LENGTH)
@@ -286,17 +305,17 @@ def get_emoji(change):
     elif abs(change) < 2:
         return "◼"
     elif abs(change) < 3:
-        return "🟫"
-    elif abs(change) < 4:
-        return "🟪"
-    elif abs(change) < 5:
-        return "🟦"
-    elif abs(change) < 6:
         return "🟩"
-    elif abs(change) < 7:
+    elif abs(change) < 4:
+        return "🟦"
+    elif abs(change) < 5:
+        return "🟪"
+    elif abs(change) < 6:
         return "🟨"
-    elif abs(change) < 8:
+    elif abs(change) < 7:
         return "🟧"
+    elif abs(change) < 8:
+        return "🟫"
     elif abs(change) < 9:
         return "🟥"
     else:
@@ -319,10 +338,11 @@ def send_to_discord(message):
     requests.post(WEBHOOK_URL, json=data)
 
 # Main loop of the script
+# Here's how you can modify the exception handling so that it logs errors to the console but does not send them to Discord:
 def main():
     global SHOW_INITIAL_ALERT
-    last_update_time = time.time() - UPDATE_INTERVAL_MINUTES * 60  # Convert minutes to seconds for time calculations
-    initialization_time = time.time() + HISTORICAL_INTERVAL_MINUTES * 60  # End time for the initialization period
+    last_update_time = time.time() - UPDATE_INTERVAL_MINUTES * 60  # Convert hours to seconds for time calculations
+    initialization_time = time.time() + HISTORICAL_INTERVAL_MINUTES * 60  # Convert hours to seconds for time calculations
     initialization_posted = False  # To track if the post-initialization message has been posted
 
     # Show the initial alert message only once when the script starts
@@ -333,26 +353,32 @@ def main():
         SHOW_INITIAL_ALERT = False
 
     while True:
-        current_time = time.time()
-        if current_time - last_update_time >= UPDATE_INTERVAL_MINUTES * 60:
-            update_active_pairs()  # Update active pairs every configured interval
-            last_update_time = current_time
+        try:
+            current_time = time.time()
+            if current_time - last_update_time >= UPDATE_INTERVAL_MINUTES * 60:
+                update_active_pairs()  # Update active pairs every configured interval
+                last_update_time = current_time
 
-        pairs = load_pairs(PAIRS_FILE)
-        prices = fetch_prices(pairs)
-        update_price_history(prices)
-        notifications = check_price_movements()
-        send_notifications(notifications)
+            pairs = load_pairs(PAIRS_FILE)
+            prices = fetch_prices(pairs)
+            update_price_history(prices)
+            notifications = check_price_movements()
+            send_notifications(notifications)
 
-        # Post the initialization complete message once the period has passed
-        if not initialization_posted and current_time >= initialization_time:
-            print(POST_INITIALIZATION_MESSAGE)
-            if USE_DISCORD_WEBHOOK:
-                send_to_discord(POST_INITIALIZATION_MESSAGE)
-            initialization_posted = True
+            # Post the initialization complete message once the period has passed
+            if not initialization_posted and current_time >= initialization_time:
+                print(POST_INITIALIZATION_MESSAGE)
+                if USE_DISCORD_WEBHOOK:
+                    send_to_discord(POST_INITIALIZATION_MESSAGE)
+                initialization_posted = True
 
-        time.sleep(FETCH_INTERVAL)
-
+            time.sleep(FETCH_INTERVAL)
+        
+        except Exception as e:
+            # Log the error to the console with a timestamp
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{timestamp}] An error occurred: {e}")
+            # Not sending the error notification to Discord to avoid leaking sensitive information
 # Entry point of the script
 if __name__ == "__main__":
     main()
