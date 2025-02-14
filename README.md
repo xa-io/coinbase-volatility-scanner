@@ -1,31 +1,36 @@
 # Coinbase Advanced Volatility Watcher
 
-This script monitors cryptocurrency pairs on Coinbase Advanced for significant price movements and sends notifications to a Discord channel. It regularly fetches the list of active USD trading pairs, tracks their price changes, and alerts you when notable movements occur.
+This script monitors cryptocurrency pairs on **Coinbase Advanced** for significant price movements and sends notifications to a Discord channel. It regularly fetches the list of active USD trading pairs, tracks their price changes, and alerts you when notable movements occur.
 
-This script is running 24/7 here: https://discord.gg/FprzuuWZ7t
+This script is running 24/7 here: [https://discord.gg/FprzuuWZ7t](https://discord.gg/FprzuuWZ7t)
 
-## Examples:
+## Examples
 
-`🔹🟦+4.33%   [VOXEL]   $0.14820  [1d +7.35%]🟧🔹`
+`🔹🟩+2.01%    [BTC]   $107427.57000  [1d +2.03%]🟩🔹BTC`
 
-`🔹🟪+3.28%    [NMR]   $16.37000  [1d +5.34%]🟩🔹`
+`🔹🟩+2.14%    [DOGE]   $0.25978  [1d -12.77%]💥🔸DOGE`
 
-`🔹◼+1.07%   [DRIFT]   $0.37950  [1d -0.91%]▪️🔸`
+`🔸🟫-7.06%    [ETH]   $2465.35500 [1d -21.27%]💥🔸ETH`
+
+`🔹🟫+7.35%   [TOSHI]   $0.00100  [1d +38.37%]💥🔹TOSHI`
 
 ## Features
 
 - **Real-Time Price Monitoring**: The script checks cryptocurrency prices at regular intervals and tracks historical price changes.
 - **Discord Notifications**: Alerts are sent to a specified Discord channel for significant price movements, with customizable messages.
 - **Automatic Pair Updates**: The list of active USD trading pairs is automatically updated every few hours.
-- **Price Movement Detection**: Detects and highlights "wicked out of range" events to spot significant market movements.
-- **Customizable Alerts**: Easily configure thresholds, intervals, and other settings to tailor the script to your needs.
-- **Debug Mode**: Option to display detailed console output for troubleshooting or analysis.
+- **Price Movement Detection**: Detects and highlights "wicked out of range" events to spot large market swings.
+- **Customizable Alerts**: Easily configure thresholds, intervals, and other settings to match your needs.
+- **Lightweight Historical Data Storage**: Instead of storing thousands of data points per pair, the script keeps detailed data only for the last 5 minutes (for high/low detection) plus one data point from ~24 hours ago (for historical comparison), greatly reducing memory usage.
+- **Safe JSON Writing**: Implements a temporary file approach when writing the `price_history.json` file to avoid corruption if the script is interrupted.
+- **Debug Mode**: Optionally print detailed output for troubleshooting by setting `DEBUG = True`.
+- **Initial and Post-Initialization Alerts**: Displays one-time messages on startup and after the initialization period so you know when data becomes fully reliable.
 
 ## Installation
 
 ### Prerequisites
 
-Ensure you have Python installed. If not, download and install it from [python.org](https://www.python.org/downloads/).
+Ensure you have Python installed (tested with **Python 3.12**). If not, download and install it from [python.org](https://www.python.org/downloads/).
 
 ### Step 1: Clone the Repository
 
@@ -62,6 +67,8 @@ Open the script and adjust the configuration variables to fit your needs. Key se
 - `HISTORY_RETENTION_MINUTES`: How long to retain price history.
 - `NOTIFICATION_THRESHOLD`: Minimum percentage change required to trigger a notification.
 - `DEBUG`: Set to `True` for console-only output; set to `False` for Discord notifications.
+- `SKIP_FAILED_PAIRS_MINUTES`: The number of minutes to skip a pair after it fails consecutive attempts.
+- Other settings (like `UPDATE_INTERVAL_MINUTES`, `VOLATILE_TEXT`, etc.) can be adjusted as needed.
 
 ### Step 5: Run the Script
 
@@ -75,16 +82,27 @@ python coinbase-volatility-scanner.py
 
 The script will print logs to the console and send notifications to Discord based on the settings you configured.
 
-## Script Overview
+### Script Overview
 
-1. **Environment Setup**: Loads API keys and webhook URL from the `.env` file.
-2. **File Management**: Creates and updates the `active_pairs_no_usd.txt` file in the script directory.
-3. **Price Monitoring**: Checks price movements for significant changes and detects "wicked out of range" events.
-4. **Notifications**: Sends notifications to the console (with timestamps) and to Discord (without timestamps).
-5. **Historical Data**: Displays percentage change over the last configured interval with corresponding emojis.
-6. **Volatile Text**: Allows adding configurable text to notifications when significant price movements are detected.
-7. **Debug Mode**: Shows detailed data being pulled if `DEBUG` is set to `True`.
-8. **Initial Alert Message**: Shows a one-time message after the script starts, explaining the initialization period.
+1. **Environment Setup**: Loads API keys and Discord webhook URL from the `.env` file.
+2. **File Management**: Automatically updates the `active_pairs_no_usd.txt` file based on active USD trading pairs.
+3. **Price Monitoring**:  
+   - Fetches current spot prices for each pair with retry logic and skip logic for failing pairs.
+   - Uses a configurable timeout and a skip window (`SKIP_FAILED_PAIRS_MINUTES`) to prevent indefinite delays.
+4. **Historical Data Storage**:  
+   - Retains detailed price data only for the last **5 minutes** (for short-term high/low detection).
+   - Keeps a single, earliest data point from within the last 24 hours for historical percentage change calculations.
+   - Saves this reduced dataset in `price_history.json` using a temporary file approach for safe writes.
+5. **Notification System**:  
+   - Detects significant price movements (including "wicked out of range" events) using both recent and historical data.
+   - Uses configurable thresholds and cooldowns to avoid repeated notifications.
+   - Sends formatted notifications to both the console (with timestamps) and Discord (if enabled).
+6. **Safe JSON Writing**:  
+   - Writes the `PRICE_HISTORY` data to a temporary file first, then atomically replaces the main JSON file.
+   - This prevents corruption of `price_history.json` if the script is interrupted during a write.
+7. **Debug and Alert Modes**:  
+   - When `DEBUG` is enabled, extra diagnostic information is printed to the console.
+   - Displays an initial alert message on startup and a post-initialization message after the warm-up period.
 
 ## Revisions
 
@@ -118,12 +136,28 @@ The script will print logs to the console and send notifications to Discord base
   - Replaced the old products URL (https://api.pro.coinbase.com/products) with the new URL (https://api.exchange.coinbase.com/products).
   - Ensured compatibility with the updated format and fields returned by the new Coinbase Advanced Trade API.
 
-## Future Considerations
+### Revision 5: Update (2025-02-11)
+- Introduced logic to skip pairs that repeatedly fail to fetch:
+  - Added `FAIL_COUNT` and `NEXT_ALLOWED_FETCH` dictionaries to track consecutive failures and enforce a skip window (`SKIP_FAILED_PAIRS_MINUTES`).
+  - The script continues scanning other pairs even if one pair fails repeatedly.
 
-- **Database Support**: Potentially adding database support if in-memory storage becomes insufficient.
-- **Additional Intervals**: Exploring additional time intervals for price monitoring.
-- **Enhanced Logging**: Adding more detailed error logging and notifications for better diagnostics.
+### Revision 6: Update (2025-02-13)
+- **Reduced Data Retention**:
+  - Updated `update_price_history()` to store only detailed data for the last **5 minutes** (for short-term high/low detection) plus **one** data point from approximately **24 hours** ago for historical comparison.
+  - This change significantly reduces memory usage and the size of `price_history.json` compared to storing every data point.
+- **Safe JSON Writing**:
+  - Modified `save_price_history()` to write the price history to a temporary file (with a `.tmp` extension) and then atomically replace the main JSON file using `os.replace()`.
+  - This prevents file corruption if the script is interrupted during a write.
+- **Overall Stability**:
+  - The script now continues scanning and sending alerts even if individual pairs fail repeatedly, thanks to the enhanced skip logic.
+  - Retains all core features including real-time monitoring, Discord notifications, and historical data analysis.
 
+## Recommendations On Use
+
+- **Weekly Reboot**: It is recommended to reboot the script once a week. This helps prevent potential memory overload and ensures the script continues to run smoothly without unexpected stops.
+- **Monitor Resource Usage**: Keep an eye on your system’s resource usage and adjust `FETCH_INTERVAL` or other settings if necessary to optimize performance.
+  
+By following these recommendations, you can maintain the stability of the script and ensure that its historical price tracking remains accurate even after restarts.
 
 ## Consider a donation after you buy your lambo.
 
