@@ -55,11 +55,27 @@
 - Updated notification formatting to display intervals as hours (e.g., `[4hr +5.94%]` instead of `[60m +5.94%]`).
 
 # Revision 4: Update (2024-12-10):
-- Updated notification on longer timeframes to 1 day (e.g., `[1d +5.94%]` instead of `[4hr +5.94%]`).
 - Updated for new Coinbase API endpoints:
   - Transitioned from the deprecated pro.coinbase.com endpoint to the new Coinbase Advanced Trade endpoint. 
   - Replaced the old products URL (https://api.pro.coinbase.com/products) with the new URL (https://api.exchange.coinbase.com/products).
   - Ensured compatibility with the updated format and fields returned by the new Coinbase Advanced Trade API.
+
+# Revision 5: Update (2025-02-11):
+- Introduced logic to skip failing pairs for a configurable period (`SKIP_FAILED_PAIRS_MINUTES`) whenever they hit `RETRY_ATTEMPTS` consecutive failures.
+- The script now continues to fetch prices and send notifications for other pairs even if one pair fails multiple times.
+- Implemented `FAIL_COUNT` and `NEXT_ALLOWED_FETCH` dictionaries to track failures and skip periods, ensuring that a single failing pair does not halt scanning for all pairs.
+- Added a new setting `SKIP_FAILED_PAIRS_MINUTES` to control how long (in minutes) a failed pair is skipped after exhausting all `RETRY_ATTEMPTS`.
+
+# Revision 6: Update (2025-02-13):
+- **Reduced Data Retention**: 
+  - Updated `update_price_history()` to store only the last **5 minutes** of data for short-term high/low detection, plus **one** data point from ~24 hours ago for historical comparison.
+  - Significantly lowers memory usage and `price_history.json` size by removing thousands of older data points per pair.
+- **Safe JSON Writing**:
+  - Implemented a temporary file approach (`.tmp`) in `save_price_history()` to prevent corruption of `price_history.json` if the script is interrupted mid-write.
+  - Renames (or replaces) the temp file only after a successful write, ensuring the old JSON remains intact if an error occurs.
+- **Other Logic Unchanged**:
+  - Preserves the existing skip logic for failing pairs, threshold notifications, and "wicked out of range" detection.
+  - Continues to fetch pairs from `active_pairs_no_usd.txt` and send Discord alerts if `USE_DISCORD_WEBHOOK` is enabled.
 
 # Future Considerations:
 - Potentially adding database support if in-memory storage becomes insufficient.
@@ -68,66 +84,124 @@
 """
 
 import os
+import re
 import time
+import json
 import requests
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 
-# Load environment variables from .env file
-load_dotenv()
-API_KEY = os.getenv("COINBASE_API_KEY")
-API_SECRET = os.getenv("COINBASE_API_SECRET")
-WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-
+#########################
 # Configuration variables
-
-# General settings
-DEBUG = False  # Set to True for console-only output; set to False for Discord notifications
-USE_DISCORD_WEBHOOK = True  # Set to False to disable sending notifications to Discord
-FETCH_INTERVAL = 15  # Time in seconds between each price fetch
-RETRY_ATTEMPTS = 5  # Number of retry attempts for API calls if a connection fails
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))  # Directory where the script is located
-PAIRS_FILE = os.path.join(SCRIPT_DIR, "active_pairs_no_usd.txt")  # Ensure the file is created in the script's directory
+#########################
+DEBUG = False                           # Set to True for console-only output; set to False for Discord notifications
+USE_DISCORD_WEBHOOK = True              # Set to False to disable sending notifications to Discord
+FETCH_INTERVAL = 15                     # Time in seconds between each price fetch
+RETRY_ATTEMPTS = 5                      # Number of retry attempts per API call
+SKIP_FAILED_PAIRS_MINUTES = 5           # Time in minutes to skip a pair if it fails RETRY_ATTEMPTS times
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+PAIRS_FILE = os.path.join(SCRIPT_DIR, "active_pairs_no_usd.txt")
 
 # Notification settings
-NOTIFICATION_THRESHOLD = 2  # Minimum percentage change required to trigger a notification
-WICK_MULTIPLIER = 3  # Multiplier for detecting "wicked out of range" events
-NOTIFICATION_COOLDOWN = 5  # Time in minutes before another notification can be sent for the same pair
-NOTIFICATION_COOLDOWN_MULTIPLIER = 2  # Multiplier for applying to NOTIFICATION_THRESHOLD during cooldown
+NOTIFICATION_THRESHOLD = 2
+WICK_MULTIPLIER = 3
+NOTIFICATION_COOLDOWN = 5
+NOTIFICATION_COOLDOWN_MULTIPLIER = 2
 
-# Historical data settings
-HISTORY_RETENTION_MINUTES = 1440  # 24 hours converted to minutes
-HISTORICAL_INTERVAL_MINUTES = 1440  # 24 hours converted to minutes
+# Data retention
+HISTORY_RETENTION_MINUTES = 1440  # 24 hours
+HISTORICAL_INTERVAL_MINUTES = 1440
 
 # Update interval setting
 UPDATE_INTERVAL_MINUTES = 30  # 30 minutes to rescan for active pairs
 
 # Initial alert settings
-SHOW_INITIAL_ALERT = True  # Set to False to skip the initial alert message when the script starts
-INITIAL_ALERT_MESSAGE = f"Scanner has been updated, please allow {HISTORICAL_INTERVAL_MINUTES // 60} hours for accurate longer term accuracy."  # Custom initial message
-POST_INITIALIZATION_MESSAGE = f"Initialization period of {HISTORICAL_INTERVAL_MINUTES // 60} hours has passed. All data moving forward will be accurate."  # Custom message after initialization period
+SHOW_INITIAL_ALERT = True
+INITIAL_ALERT_MESSAGE = f"Scanner has been updated, please allow {HISTORICAL_INTERVAL_MINUTES // 60} hours for accurate longer term accuracy."
+POST_INITIALIZATION_MESSAGE = (
+    f"Initialization period of {HISTORICAL_INTERVAL_MINUTES // 60} hours has passed. "
+    "All data moving forward will be accurate."
+)
 
-# Volatility text
-VOLATILE_TEXT = ""  # Text to use in volatile notifications, set to empty string for now
+VOLATILE_TEXT = ""
 
 # Data storage dictionaries
-PRICE_HISTORY = {}  # Dictionary to store price history for each pair
-LAST_NOTIFIED = {}  # Dictionary to store the last percentage change notified for each pair
-LAST_NOTIFICATION_TIME = {}  # Dictionary to store the last notification time for each pair
-LAST_PRICES = {}  # Dictionary to store the most recent prices for each pair
+PRICE_HISTORY = {}
+LAST_NOTIFIED = {}
+LAST_NOTIFICATION_TIME = {}
+LAST_PRICES = {}
 
 # Formatting settings
-PAIR_LENGTH = 11  # Total characters for pair names, including brackets
-PERCENT_LENGTH = 7  # Total characters for percentage changes
-PRICE_LENGTH = 10  # Total characters for price, including the dollar sign
-HISTORICAL_LENGTH = 13  # Total characters for historical data
+PAIR_LENGTH = 11
+PERCENT_LENGTH = 7
+PRICE_LENGTH = 10
+HISTORICAL_LENGTH = 13
 
-# Function to load currency pairs from the file
+# Fail/skip logic
+FAIL_COUNT = {}
+NEXT_ALLOWED_FETCH = {}
+
+load_dotenv()
+API_KEY = os.getenv("COINBASE_API_KEY")
+API_SECRET = os.getenv("COINBASE_API_SECRET")
+WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+###################################
+# JSON SAVE / LOAD PRICE_HISTORY
+###################################
+PRICE_HISTORY_FILE = os.path.join(SCRIPT_DIR, "price_history.json")
+
+def save_price_history():
+    """
+    Save PRICE_HISTORY to a temporary file, then atomically rename it
+    to avoid corrupting price_history.json if interrupted mid-write.
+    """
+    serializable_data = {}
+    for pair, records in PRICE_HISTORY.items():
+        # Convert (datetime, price) -> (timestamp, price)
+        serializable_data[pair] = [(ts.timestamp(), price) for (ts, price) in records]
+
+    temp_file = PRICE_HISTORY_FILE + ".tmp"
+    try:
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(serializable_data, f, indent=2)
+        os.replace(temp_file, PRICE_HISTORY_FILE)
+    except Exception as e:
+        print(f"Error saving {temp_file}: {e}")
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+def load_price_history():
+    """
+    Load PRICE_HISTORY from JSON if it exists, otherwise start fresh.
+    If the JSON is corrupted, we'll also start fresh.
+    """
+    global PRICE_HISTORY
+    if not os.path.exists(PRICE_HISTORY_FILE):
+        print(f"{PRICE_HISTORY_FILE} not found. Starting fresh with empty PRICE_HISTORY.")
+        return
+    
+    try:
+        with open(PRICE_HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        loaded_history = {}
+        for pair, records in data.items():
+            loaded_history[pair] = [
+                (datetime.fromtimestamp(ts, timezone.utc), price)
+                for (ts, price) in records
+            ]
+        PRICE_HISTORY = loaded_history
+        print(f"Loaded PRICE_HISTORY from {PRICE_HISTORY_FILE}.")
+    except Exception as e:
+        print(f"Failed to load {PRICE_HISTORY_FILE}. Starting fresh. Error: {e}")
+        PRICE_HISTORY = {}
+
 def load_pairs(file_path):
     with open(file_path, 'r') as f:
         return [line.strip() for line in f.readlines()]
 
 def update_active_pairs():
+    """Fetch active USD pairs from Coinbase and update local pairs file if changed."""
     url = "https://api.exchange.coinbase.com/products"
     try:
         response = requests.get(url)
@@ -137,12 +211,12 @@ def update_active_pairs():
         return
     
     products = response.json()
-    # Filter out only USD pairs (note: still use 'quote_currency' not 'quote_currency_id')
-    usd_pairs = [product for product in products if product['quote_currency'] == 'USD' and not product['trading_disabled']]
-    
-    # Extract base currencies and sort them
-    current_active_pairs_no_usd = sorted(pair['base_currency'] for pair in usd_pairs)
-    
+    # Filter out only USD pairs that are not disabled
+    usd_pairs = [p for p in products if p.get('quote_currency') == 'USD' and not p.get('trading_disabled')]
+
+    # Extract base currencies
+    current_active_pairs_no_usd = sorted(p.get('base_currency') for p in usd_pairs if 'base_currency' in p)
+
     # Load previous pairs from file
     previous_active_pairs_no_usd = set()
     try:
@@ -150,8 +224,7 @@ def update_active_pairs():
             previous_active_pairs_no_usd = set(file.read().splitlines())
     except FileNotFoundError:
         print(f"{PAIRS_FILE} not found, creating a new one.")
-    
-    # Check if the file needs to be updated
+
     if set(current_active_pairs_no_usd) != previous_active_pairs_no_usd:
         with open(PAIRS_FILE, "w") as file:
             for pair in current_active_pairs_no_usd:
@@ -160,192 +233,236 @@ def update_active_pairs():
     else:
         print(f"No changes in active pairs. {PAIRS_FILE} remains the same.")
 
-
-# Function to fetch current spot prices from Coinbase API with retry logic
 def fetch_prices(pairs):
+    """Fetch spot prices with retry logic and skip failing pairs."""
     prices = {}
-    start_time = time.time()  # Start time for fetching prices
+    start_time = time.time()
+
     for pair in pairs:
+        skip_until = NEXT_ALLOWED_FETCH.get(pair, 0)
+        if time.time() < skip_until:
+            prices[pair] = None
+            continue
+
+        success = False
         for attempt in range(RETRY_ATTEMPTS):
             try:
-                response = requests.get(f"https://api.coinbase.com/v2/prices/{pair}-USD/spot")
+                # Use a timeout to prevent indefinite hangs
+                response = requests.get(f"https://api.coinbase.com/v2/prices/{pair}-USD/spot", timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 prices[pair] = float(data['data']['amount'])
-                break  # Exit loop if successful
+                FAIL_COUNT[pair] = 0
+                success = True
+                break
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
                 print(f"Error fetching price for {pair}: {e}")
-                if attempt < RETRY_ATTEMPTS - 1:
-                    print(f"Retrying... ({attempt + 1}/{RETRY_ATTEMPTS})")
-                    time.sleep(2)  # Wait before retrying
-                else:
-                    print(f"Failed to fetch price for {pair} after {RETRY_ATTEMPTS} attempts.")
-                    prices[pair] = None
-    end_time = time.time()  # End time for fetching prices
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fetching prices took {end_time - start_time:.2f} seconds.")  # Log the time taken
+                time.sleep(2)
+
+        if not success:
+            FAIL_COUNT[pair] = FAIL_COUNT.get(pair, 0) + 1
+            prices[pair] = None
+            if FAIL_COUNT[pair] >= RETRY_ATTEMPTS:
+                NEXT_ALLOWED_FETCH[pair] = time.time() + SKIP_FAILED_PAIRS_MINUTES * 60
+                print(f"Pair {pair} failed {FAIL_COUNT[pair]} times. Skipping for {SKIP_FAILED_PAIRS_MINUTES} minutes.")
+        else:
+            NEXT_ALLOWED_FETCH[pair] = 0
+
+    end_time = time.time()
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fetching prices took {end_time - start_time:.2f} seconds.")
 
     if DEBUG:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] DEBUG: Fetched prices: {prices}")  # Print all prices in one large data pull with a timestamp
+        print(f"[{timestamp}] DEBUG: Fetched prices: {prices}")
 
     return prices
 
-# Function to update the price history and track highs and lows for each pair
 def update_price_history(prices):
+    """
+    Append new prices for each pair, but store:
+      - ALL data points from the last 5 minutes (for high/low detection)
+      - The earliest data point from ~24 hours ago, if it exists
+      This approach drastically reduces the total stored data.
+    """
     current_time = datetime.now(timezone.utc)
-    retention_period = timedelta(minutes=HISTORY_RETENTION_MINUTES)
+    five_min_cutoff = current_time - timedelta(minutes=5)
+    full_day_cutoff = current_time - timedelta(minutes=HISTORY_RETENTION_MINUTES)
+
     for pair, price in prices.items():
         if price is None:
-            continue  # Skip pairs that failed to fetch
+            continue
+
         if pair not in PRICE_HISTORY:
             PRICE_HISTORY[pair] = []
-        PRICE_HISTORY[pair].append((current_time, price))
-        # Remove data older than the configured HISTORY_RETENTION_MINUTES
-        PRICE_HISTORY[pair] = [
-            (timestamp, p) for timestamp, p in PRICE_HISTORY[pair]
-            if timestamp > current_time - retention_period
-        ]
 
-# Function to check for significant price movements and "wicked out of range" events
+        # Add the new data point
+        PRICE_HISTORY[pair].append((current_time, price))
+
+        # Filter out everything older than 24 hours
+        data_24hr = [(ts, p) for (ts, p) in PRICE_HISTORY[pair] if ts >= full_day_cutoff]
+
+        # Sort by timestamp
+        data_24hr.sort(key=lambda x: x[0])
+
+        # We'll keep:
+        #   - All points newer than 5 minutes ago
+        #   - If there's any points older than 5 min but within 24 hours, keep only the earliest one
+        #     to use as the "historical" data point.
+        # Everything else is discarded.
+        final_list = [(ts, p) for (ts, p) in data_24hr if ts >= five_min_cutoff]
+
+        # If there's at least one point < five_min_cutoff in data_24hr, keep the earliest
+        older_points = [(ts, p) for (ts, p) in data_24hr if ts < five_min_cutoff]
+        if older_points:
+            # The earliest point in data_24hr is older than 5 min
+            earliest_24hr_point = older_points[0]  # They are sorted
+            # Insert it at the front, so it's the oldest in final_list
+            final_list.insert(0, earliest_24hr_point)
+
+        PRICE_HISTORY[pair] = final_list
+
 def check_price_movements():
+    """
+    Check for significant price movements using the last 5 min data
+    for max/min detection, plus the earliest 24-hour point for historical difference.
+    """
     notifications = []
     current_time = datetime.now(timezone.utc)
     historical_interval = timedelta(minutes=HISTORICAL_INTERVAL_MINUTES)
-    
+
     for pair, history in PRICE_HISTORY.items():
-        if len(history) > 0:
-            initial_time = current_time - timedelta(minutes=5)
-            recent_prices = [price for timestamp, price in history if timestamp >= initial_time]
-            if len(recent_prices) > 0:
-                initial_price = recent_prices[0]
-                current_price = recent_prices[-1]
-                high_price = max(recent_prices)
-                low_price = min(recent_prices)
-                percentage_change = ((current_price - initial_price) / initial_price) * 100
+        if len(history) == 0:
+            continue
 
-                # Calculate the historical percentage change over the configured interval
-                historical_prices = [price for timestamp, price in history if timestamp >= current_time - historical_interval]
-                if historical_prices:
-                    historical_initial_price = historical_prices[0]
-                    historical_percentage_change = ((current_price - historical_initial_price) / historical_initial_price) * 100
-                else:
-                    historical_percentage_change = 0
+        # The last 5 minutes data is everything except possibly the first item if that is from 24 hr
+        # But we'll just gather by current_time - 5min:
+        recent_cutoff = current_time - timedelta(minutes=5)
+        recent_prices = [price for (ts, price) in history if ts >= recent_cutoff]
 
-                # Check if the pair has been notified recently and apply cooldown logic
-                last_notification_time = LAST_NOTIFICATION_TIME.get(pair, None)
-                if last_notification_time:
-                    time_since_last_notification = (current_time - last_notification_time).total_seconds() / 60  # convert to minutes
-                    if time_since_last_notification < NOTIFICATION_COOLDOWN and abs(percentage_change - LAST_NOTIFIED.get(pair, 0)) < NOTIFICATION_THRESHOLD * NOTIFICATION_COOLDOWN_MULTIPLIER:
-                        continue  # Skip if within cooldown and the percentage change is not significant
+        if not recent_prices:
+            continue
 
-                # Check if the price has significantly moved since last notification
-                last_price = LAST_PRICES.get(pair, None)
-                if last_price:
-                    movement_from_last = ((current_price - last_price) / last_price) * 100
-                    if abs(movement_from_last) < NOTIFICATION_THRESHOLD:
-                        continue  # Skip if movement from the last notification is not significant
+        initial_price = recent_prices[0]
+        current_price = recent_prices[-1]
+        high_price = max(recent_prices)
+        low_price = min(recent_prices)
+        percentage_change = ((current_price - initial_price) / initial_price) * 100 if initial_price != 0 else 0
 
-                # Update the last prices dictionary with the current price
-                LAST_PRICES[pair] = current_price
+        # For the 24-hour data, we want the earliest entry that is still in PRICE_HISTORY
+        # Because we stored at most 1 data point older than 5 min, that is effectively the earliest in the last 24 hr
+        # But let's keep consistent with the logic:
+        historical_cutoff = current_time - historical_interval
+        # We'll find any that are >= historical_cutoff
+        historical_prices = [price for (ts, price) in history if ts >= historical_cutoff]
+        if historical_prices:
+            historical_initial_price = historical_prices[0]  # The earliest in that list
+            historical_percentage_change = ((current_price - historical_initial_price) / historical_initial_price) * 100 if historical_initial_price != 0 else 0
+        else:
+            historical_percentage_change = 0
 
-                # Detect significant highs or lows (wicked out of range events)
-                wicked = False
-                if high_price > initial_price * (1 + WICK_MULTIPLIER * NOTIFICATION_THRESHOLD / 100):
-                    wicked = True
-                    notifications.append(format_notification(pair, percentage_change, current_price, historical_percentage_change, VOLATILE_TEXT))
-                elif low_price < initial_price * (1 - WICK_MULTIPLIER * NOTIFICATION_THRESHOLD / 100):
-                    wicked = True
-                    notifications.append(format_notification(pair, percentage_change, current_price, historical_percentage_change, VOLATILE_TEXT))
+        # Cooldown logic
+        last_notification_time = LAST_NOTIFICATION_TIME.get(pair, None)
+        if last_notification_time:
+            time_since_last = (current_time - last_notification_time).total_seconds() / 60
+            if (time_since_last < NOTIFICATION_COOLDOWN and
+                abs(percentage_change - LAST_NOTIFIED.get(pair, 0)) < NOTIFICATION_THRESHOLD * NOTIFICATION_COOLDOWN_MULTIPLIER):
+                continue
 
-                if abs(percentage_change) >= NOTIFICATION_THRESHOLD and not wicked:
-                    notifications.append(format_notification(pair, percentage_change, current_price, historical_percentage_change))
-                    LAST_NOTIFIED[pair] = percentage_change  # Update last notified percentage change
-                    LAST_NOTIFICATION_TIME[pair] = current_time  # Update last notification time
+        # Enough movement from last?
+        last_price = LAST_PRICES.get(pair, None)
+        if last_price is not None:
+            movement_from_last = ((current_price - last_price) / last_price) * 100 if last_price != 0 else 0
+            if abs(movement_from_last) < NOTIFICATION_THRESHOLD:
+                continue
+
+        # Update last known price
+        LAST_PRICES[pair] = current_price
+
+        # Check "wick" detection
+        wicked = False
+        if high_price > initial_price * (1 + WICK_MULTIPLIER * NOTIFICATION_THRESHOLD / 100):
+            wicked = True
+            notifications.append(format_notification(pair, percentage_change, current_price, historical_percentage_change, VOLATILE_TEXT))
+        elif low_price < initial_price * (1 - WICK_MULTIPLIER * NOTIFICATION_THRESHOLD / 100):
+            wicked = True
+            notifications.append(format_notification(pair, percentage_change, current_price, historical_percentage_change, VOLATILE_TEXT))
+
+        if abs(percentage_change) >= NOTIFICATION_THRESHOLD and not wicked:
+            notifications.append(format_notification(pair, percentage_change, current_price, historical_percentage_change))
+            LAST_NOTIFIED[pair] = percentage_change
+            LAST_NOTIFICATION_TIME[pair] = current_time
+
     return notifications
 
-# Function to format the notification messages
 def format_notification(pair, change, current_price, historical_change, extra_info=""):
     emoji = get_emoji(change)
     sign = "🔹" if change > 0 else "🔸"
     historical_emoji = get_emoji(historical_change)
     historical_sign = "🔹" if historical_change > 0 else "🔸"
-    # historical_info = f"[{HISTORICAL_INTERVAL_MINUTES // 60}hr {'+' if historical_change > 0 else ''}{historical_change:.2f}%]"
     historical_info = f"[{HISTORICAL_INTERVAL_MINUTES // 1440}d {'+' if historical_change > 0 else ''}{historical_change:.2f}%]"
 
-
-    # Pad the pair name to the desired length
     pair_display = f"[{pair}]".center(PAIR_LENGTH)
-    
-    # Pad the percentage change to the desired length
     percent_display = f"{change:+.2f}%".ljust(PERCENT_LENGTH)
-    
-    # Determine the price display and pad it to the desired length
     price_display = f"${current_price:.5f}".center(PRICE_LENGTH)
-    
-    # Pad the historical info to the desired length
     historical_display = f"{historical_info}".rjust(HISTORICAL_LENGTH)
-    
-    # Create the message string for console 
+
     message_console = f"{sign}{emoji}\t{percent_display}\t{pair_display}\t{price_display}\t{historical_display}{historical_emoji}{historical_sign}"
-    
-    # Create the message string for Discord with backticks around the main content
     message_discord = f"{sign}{emoji}`{percent_display}{pair_display}{price_display}{historical_display}`{historical_emoji}{historical_sign}[{pair}](<https://www.coinbase.com/advanced-trade/spot/{pair}-USD>)"
-    
-    # Add extra info like "wicked out of range" if applicable
+
     if extra_info:
         message_console += f" ({extra_info})"
         message_discord += f" ({extra_info})"
-        
+
     return message_console, message_discord
 
-# Function to determine which emoji to use based on the percentage change
 def get_emoji(change):
-    if abs(change) < 1:
+    """Return an emoji representing how big the percentage change is."""
+    val = abs(change)
+    if val < 1:
         return "▪️"
-    elif abs(change) < 2:
+    elif val < 2:
         return "◼"
-    elif abs(change) < 3:
+    elif val < 3:
         return "🟩"
-    elif abs(change) < 4:
+    elif val < 4:
         return "🟦"
-    elif abs(change) < 5:
+    elif val < 5:
         return "🟪"
-    elif abs(change) < 6:
+    elif val < 6:
         return "🟨"
-    elif abs(change) < 7:
+    elif val < 7:
         return "🟧"
-    elif abs(change) < 8:
+    elif val < 8:
         return "🟫"
-    elif abs(change) < 9:
+    elif val < 9:
         return "🟥"
     else:
         return "💥"
 
-# Function to send notifications either to the console or Discord
 def send_notifications(notifications):
+    """Batch console + Discord notifications."""
     if notifications:
         for notification in notifications:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            message_console, message_discord = notification
-            print(f"[{timestamp}] {message_console}")  # Console output with timestamp
+            message_console, _ = notification
+            print(f"[{timestamp}] {message_console}")
         if USE_DISCORD_WEBHOOK and not DEBUG:
-            batched_message = "\n".join([msg[1] for msg in notifications])
-            send_to_discord(batched_message)  # Discord notification without timestamp
+            batched_message = "\n".join(n[1] for n in notifications)
+            send_to_discord(batched_message)
 
-# Function to send the message to a Discord channel via webhook
 def send_to_discord(message):
     data = {"content": message}
     requests.post(WEBHOOK_URL, json=data)
 
-# Main loop of the script
-# Here's how you can modify the exception handling so that it logs errors to the console but does not send them to Discord:
 def main():
     global SHOW_INITIAL_ALERT
-    last_update_time = time.time() - UPDATE_INTERVAL_MINUTES * 60  # Convert hours to seconds for time calculations
-    initialization_time = time.time() + HISTORICAL_INTERVAL_MINUTES * 60  # Convert hours to seconds for time calculations
-    initialization_posted = False  # To track if the post-initialization message has been posted
+    last_update_time = time.time() - UPDATE_INTERVAL_MINUTES * 60
+    initialization_time = time.time() + HISTORICAL_INTERVAL_MINUTES * 60
+    initialization_posted = False
 
-    # Show the initial alert message only once when the script starts
+    # Load saved PRICE_HISTORY (if any) before main loop
+    load_price_history()
+
     if SHOW_INITIAL_ALERT:
         print(INITIAL_ALERT_MESSAGE)
         if USE_DISCORD_WEBHOOK:
@@ -356,16 +473,18 @@ def main():
         try:
             current_time = time.time()
             if current_time - last_update_time >= UPDATE_INTERVAL_MINUTES * 60:
-                update_active_pairs()  # Update active pairs every configured interval
+                update_active_pairs()
                 last_update_time = current_time
 
             pairs = load_pairs(PAIRS_FILE)
             prices = fetch_prices(pairs)
-            update_price_history(prices)
+            update_price_history(prices)      # Only keep last 5 min + earliest 24 hr
             notifications = check_price_movements()
             send_notifications(notifications)
 
-            # Post the initialization complete message once the period has passed
+            # Safely save to avoid JSON corruption
+            save_price_history()
+
             if not initialization_posted and current_time >= initialization_time:
                 print(POST_INITIALIZATION_MESSAGE)
                 if USE_DISCORD_WEBHOOK:
@@ -373,12 +492,10 @@ def main():
                 initialization_posted = True
 
             time.sleep(FETCH_INTERVAL)
-        
+
         except Exception as e:
-            # Log the error to the console with a timestamp
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{timestamp}] An error occurred: {e}")
-            # Not sending the error notification to Discord to avoid leaking sensitive information
-# Entry point of the script
+
 if __name__ == "__main__":
     main()
