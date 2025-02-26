@@ -16,17 +16,19 @@
 - Run the script in your preferred Python environment using `python range_puller.py`.
 - Monitor the console for output or check your Discord channel for notifications.
 
-# Script Overview:
-1. **Environment Setup**: Loads API keys and webhook URL from the `.env` file.
-2. **File Management**: Creates and updates the `active_pairs_no_usd.txt` file in the same directory as the script.
-3. **Price Monitoring**: Checks price movements for significant changes and detects "wicked out of range" events.
-4. **Notifications**: Sends notifications to the console (with timestamps) and to Discord (without timestamps).
-5. **Historical Data**: Displays the percentage change over the last configured interval (e.g., `HISTORICAL_INTERVAL_MINUTES`) alongside the current price change, with corresponding emojis.
-6. **Volatile Text**: Allows for adding configurable text to notifications when significant price movements are detected.
-7. **Debug Mode**: Shows detailed data being pulled from `fetch_prices(pairs)` if `DEBUG` is set to `True`.
-8. **Initial Alert Message**: Shows a one-time message "Scanner has been updated, please allow {HISTORICAL_INTERVAL_MINUTES} minutes for accurate longer term accuracy." right after the script starts.
-9. **Post-Initialization Message**: Notifies users that the initialization period has passed, ensuring all subsequent data is accurate.
-10. **Notification Cooldown**: Controls how frequently notifications can be sent for the same pair and applies a multiplier to the threshold during cooldown.
+# Script Overview
+  1. Environment Setup: Loads API keys and Discord webhook info from a `.env` file in the same directory.
+  2. File Management: Maintains `active_pairs_no_usd.txt` for active USD pairs and `price_history.json` for short‐term plus minimal historical data.
+  3. Price Monitoring: Fetches cryptocurrency prices at regular intervals, tracking short‐term movements and 24‐hour reference points.
+  4. Notifications: Sends formatted alerts to the console (with timestamps) and optionally to Discord, including pair symbols and percentage changes.
+  5. Historical Data: Preserves up to 24 hours of data, focusing on the last 5 minutes for detailed detection and a single anchor point from ~24 hours ago.
+  6. Volatile Text: Allows an optional custom message (`VOLATILE_TEXT`) to highlight significant market moves in alerts.
+  7. Debug Mode: Prints additional info (e.g. fetched prices and retry logs) to the console if `DEBUG` is set to `True`.
+  8. Initial Alert Message: Announces script start and warns of an initial sync period (e.g., 24 hours) for accurate historical comparisons.
+  9. Post-Initialization Message: Once the sync period ends, notifies that a full rolling history is established for more reliable alerts.
+  10. Notification Cooldown: Limits alerts for the same pair to avoid noise, with a cooldown period and an optional extra threshold multiplier.
+  11. Block List: Ignores alerts for any coins listed in `BLOCK_LIST` while still fetching and storing their price data.
+  12. Fail-Skip Logic: Temporarily skips fetching pairs that exceed `RETRY_ATTEMPTS` errors, preventing failed pairs from blocking the entire process.
 
 # Revision 1: Release (2024-08-16):
   - Created the initial version of the script to monitor cryptocurrency pairs for significant price movements.
@@ -43,44 +45,43 @@
   - Added a one-time initial message to notify users about the 15-minute accuracy wait.
 
 # Revision 2: Update (2024-08-18):
-- Added a post-initialization message to notify users that the initialization period has passed, ensuring all subsequent data is accurate.
-- Improved notification formatting to ensure the correct placement of emojis based on price changes.
-- Added logic to track and store the most recent pair prices in memory, ensuring notifications are only triggered if the price moves beyond the `NOTIFICATION_THRESHOLD`.
+  - Added a post-initialization message to notify users that the initialization period has passed, ensuring all subsequent data is accurate.
+  - Improved notification formatting to ensure the correct placement of emojis based on price changes.
+  - Added logic to track and store the most recent pair prices in memory, ensuring notifications are only triggered if the price moves beyond the `NOTIFICATION_THRESHOLD`.
 
 # Revision 3: Update (2024-08-21):
-- Converted time-related settings from minutes to hours:
+  - Converted time-related settings from minutes to hours:
   - `HISTORY_RETENTION_MINUTES` and `HISTORICAL_INTERVAL_MINUTES` updated to 4 hours (240 minutes).
   - `UPDATE_INTERVAL_MINUTES` updated to 6 hours (360 minutes).
-- Updated the initial alert and post-initialization messages to reflect the new hourly intervals.
-- Updated notification formatting to display intervals as hours (e.g., `[4hr +5.94%]` instead of `[60m +5.94%]`).
+  - Updated the initial alert and post-initialization messages to reflect the new hourly intervals.
+  - Updated notification formatting to display intervals as hours (e.g., `[4hr +5.94%]` instead of `[60m +5.94%]`).
 
 # Revision 4: Update (2024-12-10):
-- Updated for new Coinbase API endpoints:
+  - Updated for new Coinbase API endpoints:
   - Transitioned from the deprecated pro.coinbase.com endpoint to the new Coinbase Advanced Trade endpoint. 
   - Replaced the old products URL (https://api.pro.coinbase.com/products) with the new URL (https://api.exchange.coinbase.com/products).
   - Ensured compatibility with the updated format and fields returned by the new Coinbase Advanced Trade API.
 
 # Revision 5: Update (2025-02-11):
-- Introduced logic to skip failing pairs for a configurable period (`SKIP_FAILED_PAIRS_MINUTES`) whenever they hit `RETRY_ATTEMPTS` consecutive failures.
-- The script now continues to fetch prices and send notifications for other pairs even if one pair fails multiple times.
-- Implemented `FAIL_COUNT` and `NEXT_ALLOWED_FETCH` dictionaries to track failures and skip periods, ensuring that a single failing pair does not halt scanning for all pairs.
-- Added a new setting `SKIP_FAILED_PAIRS_MINUTES` to control how long (in minutes) a failed pair is skipped after exhausting all `RETRY_ATTEMPTS`.
+  - Introduced logic to skip failing pairs for a configurable period (`SKIP_FAILED_PAIRS_MINUTES`) whenever they hit `RETRY_ATTEMPTS` consecutive failures.
+  - The script now continues to fetch prices and send notifications for other pairs even if one pair fails multiple times.
+  - Implemented `FAIL_COUNT` and `NEXT_ALLOWED_FETCH` dictionaries to track failures and skip periods, ensuring that a single failing pair does not halt scanning for all pairs.
+  - Added a new setting `SKIP_FAILED_PAIRS_MINUTES` to control how long (in minutes) a failed pair is skipped after exhausting all `RETRY_ATTEMPTS`.
 
 # Revision 6: Update (2025-02-13):
-- **Reduced Data Retention**: 
   - Updated `update_price_history()` to store only the last **5 minutes** of data for short-term high/low detection, plus **one** data point from ~24 hours ago for historical comparison.
   - Significantly lowers memory usage and `price_history.json` size by removing thousands of older data points per pair.
-- **Safe JSON Writing**:
   - Implemented a temporary file approach (`.tmp`) in `save_price_history()` to prevent corruption of `price_history.json` if the script is interrupted mid-write.
   - Renames (or replaces) the temp file only after a successful write, ensuring the old JSON remains intact if an error occurs.
-- **Other Logic Unchanged**:
   - Preserves the existing skip logic for failing pairs, threshold notifications, and "wicked out of range" detection.
   - Continues to fetch pairs from `active_pairs_no_usd.txt` and send Discord alerts if `USE_DISCORD_WEBHOOK` is enabled.
 
-# Future Considerations:
-- Potentially adding database support if in-memory storage becomes insufficient.
-- Exploring additional time intervals for price monitoring beyond the current `FETCH_INTERVAL` and `UPDATE_INTERVAL_MINUTES`.
-- Enhancing the script with more detailed error logging and notifications for better diagnostics.
+ # Revision 7: Update (2025-02-26) 
+  - Added a `BLOCK_LIST` configuration option for specifying coins (e.g., `IOTX`) that should be excluded from generating alerts.  
+  - The script still fetches and stores price data for these coins, but no notifications will be sent if one of these coins meets the usual movement thresholds.
+  - All existing logic for short-term versus historical data, retry logic, cooldown checks, and JSON data persistence remains unchanged.
+  - To ignore `IOTX` and `ABC123` in future alerts, set `BLOCK_LIST = "IOTX, ABC123"` in the configuration.  
+  - The script will continue tracking prices for those coins, but no alerts will be sent.
 """
 
 import os
@@ -124,6 +125,11 @@ POST_INITIALIZATION_MESSAGE = (
 )
 
 VOLATILE_TEXT = ""
+
+# NEW: Block list to skip certain coins for alerts (comma-separated).
+BLOCK_LIST = "IOTX"
+# Convert BLOCK_LIST string to a set of uppercase coin symbols (e.g. {"IOTX, ABC123"}).
+BLOCKED_COINS = {coin.strip().upper() for coin in BLOCK_LIST.split(",") if coin.strip()}
 
 # Data storage dictionaries
 PRICE_HISTORY = {}
@@ -280,7 +286,7 @@ def fetch_prices(pairs):
 def update_price_history(prices):
     """
     Append new prices for each pair, but store:
-      - ALL data points from the last 5 minutes (for high/low detection)
+      - All data points from the last 5 minutes (for high/low detection)
       - The earliest data point from ~24 hours ago, if it exists
       This approach drastically reduces the total stored data.
     """
@@ -306,17 +312,13 @@ def update_price_history(prices):
 
         # We'll keep:
         #   - All points newer than 5 minutes ago
-        #   - If there's any points older than 5 min but within 24 hours, keep only the earliest one
+        #   - If there's any point older than 5 min but within 24 hours, keep only the earliest one
         #     to use as the "historical" data point.
-        # Everything else is discarded.
         final_list = [(ts, p) for (ts, p) in data_24hr if ts >= five_min_cutoff]
 
-        # If there's at least one point < five_min_cutoff in data_24hr, keep the earliest
         older_points = [(ts, p) for (ts, p) in data_24hr if ts < five_min_cutoff]
         if older_points:
-            # The earliest point in data_24hr is older than 5 min
-            earliest_24hr_point = older_points[0]  # They are sorted
-            # Insert it at the front, so it's the oldest in final_list
+            earliest_24hr_point = older_points[0]
             final_list.insert(0, earliest_24hr_point)
 
         PRICE_HISTORY[pair] = final_list
@@ -331,14 +333,15 @@ def check_price_movements():
     historical_interval = timedelta(minutes=HISTORICAL_INTERVAL_MINUTES)
 
     for pair, history in PRICE_HISTORY.items():
+        # 1) Skip coins that are in BLOCKED_COINS
+        if pair.upper() in BLOCKED_COINS:
+            continue
+
         if len(history) == 0:
             continue
 
-        # The last 5 minutes data is everything except possibly the first item if that is from 24 hr
-        # But we'll just gather by current_time - 5min:
         recent_cutoff = current_time - timedelta(minutes=5)
         recent_prices = [price for (ts, price) in history if ts >= recent_cutoff]
-
         if not recent_prices:
             continue
 
@@ -346,17 +349,16 @@ def check_price_movements():
         current_price = recent_prices[-1]
         high_price = max(recent_prices)
         low_price = min(recent_prices)
-        percentage_change = ((current_price - initial_price) / initial_price) * 100 if initial_price != 0 else 0
+        if initial_price != 0:
+            percentage_change = ((current_price - initial_price) / initial_price) * 100
+        else:
+            percentage_change = 0
 
-        # For the 24-hour data, we want the earliest entry that is still in PRICE_HISTORY
-        # Because we stored at most 1 data point older than 5 min, that is effectively the earliest in the last 24 hr
-        # But let's keep consistent with the logic:
         historical_cutoff = current_time - historical_interval
-        # We'll find any that are >= historical_cutoff
         historical_prices = [price for (ts, price) in history if ts >= historical_cutoff]
-        if historical_prices:
-            historical_initial_price = historical_prices[0]  # The earliest in that list
-            historical_percentage_change = ((current_price - historical_initial_price) / historical_initial_price) * 100 if historical_initial_price != 0 else 0
+        if historical_prices and historical_prices[0] != 0:
+            hist_init_price = historical_prices[0]
+            historical_percentage_change = ((current_price - hist_init_price) / hist_init_price) * 100
         else:
             historical_percentage_change = 0
 
@@ -368,14 +370,12 @@ def check_price_movements():
                 abs(percentage_change - LAST_NOTIFIED.get(pair, 0)) < NOTIFICATION_THRESHOLD * NOTIFICATION_COOLDOWN_MULTIPLIER):
                 continue
 
-        # Enough movement from last?
         last_price = LAST_PRICES.get(pair, None)
-        if last_price is not None:
-            movement_from_last = ((current_price - last_price) / last_price) * 100 if last_price != 0 else 0
+        if last_price is not None and last_price != 0:
+            movement_from_last = ((current_price - last_price) / last_price) * 100
             if abs(movement_from_last) < NOTIFICATION_THRESHOLD:
                 continue
 
-        # Update last known price
         LAST_PRICES[pair] = current_price
 
         # Check "wick" detection
@@ -407,7 +407,10 @@ def format_notification(pair, change, current_price, historical_change, extra_in
     historical_display = f"{historical_info}".rjust(HISTORICAL_LENGTH)
 
     message_console = f"{sign}{emoji}\t{percent_display}\t{pair_display}\t{price_display}\t{historical_display}{historical_emoji}{historical_sign}"
-    message_discord = f"{sign}{emoji}`{percent_display}{pair_display}{price_display}{historical_display}`{historical_emoji}{historical_sign}[{pair}](<https://www.coinbase.com/advanced-trade/spot/{pair}-USD>)"
+    message_discord = (
+        f"{sign}{emoji}`{percent_display}{pair_display}{price_display}{historical_display}`"
+        f"{historical_emoji}{historical_sign}[{pair}](<https://www.coinbase.com/advanced-trade/spot/{pair}-USD>)"
+    )
 
     if extra_info:
         message_console += f" ({extra_info})"
@@ -478,7 +481,7 @@ def main():
 
             pairs = load_pairs(PAIRS_FILE)
             prices = fetch_prices(pairs)
-            update_price_history(prices)      # Only keep last 5 min + earliest 24 hr
+            update_price_history(prices)
             notifications = check_price_movements()
             send_notifications(notifications)
 
