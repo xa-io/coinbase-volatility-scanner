@@ -82,27 +82,52 @@ python coinbase-volatility-scanner.py
 
 The script will print logs to the console and send notifications to Discord based on the settings you configured.
 
-### Script Overview
+# Script Overview:
 
-1. **Environment Setup**: Loads API keys and Discord webhook URL from the `.env` file.
-2. **File Management**: Automatically updates the `active_pairs_no_usd.txt` file based on active USD trading pairs.
-3. **Price Monitoring**:  
-   - Fetches current spot prices for each pair with retry logic and skip logic for failing pairs.
-   - Uses a configurable timeout and a skip window (`SKIP_FAILED_PAIRS_MINUTES`) to prevent indefinite delays.
-4. **Historical Data Storage**:  
-   - Retains detailed price data only for the last **5 minutes** (for short-term high/low detection).
-   - Keeps a single, earliest data point from within the last 24 hours for historical percentage change calculations.
-   - Saves this reduced dataset in `price_history.json` using a temporary file approach for safe writes.
-5. **Notification System**:  
-   - Detects significant price movements (including "wicked out of range" events) using both recent and historical data.
-   - Uses configurable thresholds and cooldowns to avoid repeated notifications.
-   - Sends formatted notifications to both the console (with timestamps) and Discord (if enabled).
-6. **Safe JSON Writing**:  
-   - Writes the `PRICE_HISTORY` data to a temporary file first, then atomically replaces the main JSON file.
-   - This prevents corruption of `price_history.json` if the script is interrupted during a write.
-7. **Debug and Alert Modes**:  
-   - When `DEBUG` is enabled, extra diagnostic information is printed to the console.
-   - Displays an initial alert message on startup and a post-initialization message after the warm-up period.
+1. **Environment Setup**  
+   Loads API keys (`COINBASE_API_KEY`, `COINBASE_API_SECRET`) and the Discord webhook URL (`DISCORD_WEBHOOK_URL`) from a `.env` file. This file should be located in the same directory as the script.
+
+2. **File Management**  
+   - Automatically creates and updates an `active_pairs_no_usd.txt` file containing all active USD trading pairs (minus the `-USD` suffix).  
+   - Stores short‐term plus minimal 24‐hour price history data in a JSON file (`price_history.json`), ensuring script restarts do not lose important historical information.
+
+3. **Price Monitoring**  
+   - Fetches prices for each active pair at configurable intervals (`FETCH_INTERVAL`).  
+   - Uses retry logic (`RETRY_ATTEMPTS`) and temporary skip windows (`SKIP_FAILED_PAIRS_MINUTES`) to handle pairs that repeatedly fail to fetch data.  
+   - Tracks short‐term price movement using the last 5 minutes of data, plus a single data point from ~24 hours ago for historical comparison.
+
+4. **Notifications**  
+   - Sends formatted alerts to both the console (with timestamps) and to a Discord channel (without timestamps) if configured via `USE_DISCORD_WEBHOOK`.  
+   - Each alert includes the pair symbol, short‐term percentage change, current price, and a 24‐hour comparison percentage with corresponding emojis.  
+
+5. **Historical Data**  
+   - Maintains a rolling 24‐hour window of historical data (`HISTORY_RETENTION_MINUTES`).  
+   - Retains all price points within the last 5 minutes for detecting local highs/lows and a single “anchor” point from ~24 hours ago for percent‐change calculation.  
+   - Saves and loads data from a JSON file to preserve history across script restarts.
+
+6. **Volatile Text**  
+   - Allows you to specify an optional text string (`VOLATILE_TEXT`) to append to alerts, useful for highlighting significant or “wicked” price changes.
+
+7. **Debug Mode**  
+   - If `DEBUG = True`, the script prints additional information to the console, including fetched price dictionaries and extended logs of retry attempts.
+
+8. **Initial Alert Message**  
+   - On script start, displays a single alert message (e.g. “Scanner has been updated…") both in the console and on Discord, indicating how long until full historical accuracy is established.
+
+9. **Post-Initialization Message**  
+   - Once the configured `HISTORICAL_INTERVAL_MINUTES` (often 24 hours) has elapsed, sends a final message acknowledging the script has built a complete rolling history, so further alerts reflect accurate longer-term data.
+
+10. **Notification Cooldown**  
+    - Ensures that each pair only triggers a new alert after a minimum cooldown period (`NOTIFICATION_COOLDOWN` in minutes).  
+    - Applies an additional threshold multiplier (`NOTIFICATION_COOLDOWN_MULTIPLIER`) to avoid back‐to‐back alerts for small fluctuations after an initial large move.
+
+11. **Block List for Ignored Coins**  
+    - Introduces a `BLOCK_LIST` (comma‐separated string) to skip sending alerts for specific coins (e.g. `"IOTX"`).  
+    - The script continues fetching prices for these pairs, but does not generate notifications when they meet normal alert conditions.
+
+12. **Fail‐Skip Logic**  
+    - Tracks pairs that repeatedly fail to fetch prices (`RETRY_ATTEMPTS`) and temporarily excludes them from requests for `SKIP_FAILED_PAIRS_MINUTES`.  
+    - Prevents an endlessly failing pair from blocking or slowing overall scanning.
 
 ## Revisions
 
@@ -151,6 +176,16 @@ The script will print logs to the console and send notifications to Discord base
 - **Overall Stability**:
   - The script now continues scanning and sending alerts even if individual pairs fail repeatedly, thanks to the enhanced skip logic.
   - Retains all core features including real-time monitoring, Discord notifications, and historical data analysis.
+
+### Revision 7: Update (2025-02-26)
+- **Block List for Ignored Coins**:  
+  - Added a `BLOCK_LIST` configuration option for specifying coins (e.g., `IOTX`) that should be excluded from generating alerts.  
+  - The script still fetches and stores price data for these coins, but no notifications will be sent if one of these coins meets the usual movement thresholds.
+- **Preserved Core Functionality**:  
+  - All existing logic for short-term versus historical data, retry logic, cooldown checks, and JSON data persistence remains unchanged.
+- **Example Usage**:  
+  - To ignore `IOTX` and `ABC123` in future alerts, set `BLOCK_LIST = "IOTX, ABC123"` in the configuration.  
+  - The script will continue tracking prices for those coins, but no alerts will be sent.
 
 ## Recommendations On Use
 
